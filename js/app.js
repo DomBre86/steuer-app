@@ -7,6 +7,7 @@ import { PERSONEN, WAEHRUNGEN, KATEGORIEN, KAT, istEinnahme, steuerTopf, TOPF_ST
 import { esc, eur, money, parseNum, numInput, date, shortDate, period, today, uid, slug } from './format.js';
 import { saveFile, getFile, deleteFile } from './files.js';
 
+const APP_VERSION = '1.2';
 const app = document.getElementById('app');
 
 const ui = {
@@ -315,10 +316,11 @@ function aufenthalteBlock(e) {
   return `<div class="between"><h2>Aufenthalte</h2><button class="link" data-act="go" data-v="aufenthalt" data-kontext="${e.id}">+ Aufenthalt</button></div>
   ${list.length ? `<div class="card flat">${list.map((a) => `<button class="list-item" data-act="go" data-v="aufenthalt" data-id="${a.id}">
       <div class="grow"><div class="t">${esc(period(a.von, a.bis) || 'ohne Datum')}${a.ort ? ' · ' + esc(a.ort) : ''}</div>
+      ${a.notiz ? `<div style="font-size:14px;color:var(--ink-2);margin-top:2px">${esc(a.notiz)}</div>` : ''}
       <div class="s"><span>${esc(tageText(aufenthaltTage(a)))}</span></div>
       <div class="s"><span class="chip ${a.unterkunft === 'hotel' || a.unterkunft === 'ferienwohnung' ? 'blue' : 'gray'}">${esc(UNTERKUNFT[a.unterkunft] || '')}</span>${mahlzeitenText(a) ? `<span>${esc(mahlzeitenText(a))}</span>` : ''}</div></div>
       ${icon('chev', 18, '#5B6168')}</button>`).join('')}
-    <div class="list-item" style="font-size:13px"><span class="grow muted">Für die Verpflegungspauschale</span><span class="num" style="font-weight:600">${sum.voll} volle · ${sum.teil} An-/Abreise</span></div></div>`
+    <div class="list-item" style="font-size:13px;display:block"><span class="muted">Summe für die Verpflegungspauschale:</span><br><span style="font-weight:700">${sum.voll} volle Tage · ${sum.teil} An-/Abreisetage</span></div></div>`
     : '<div class="card dashed muted small" style="font-size:13px;line-height:1.45">Noch keine Aufenthalte. Trage die Zeiträume ein, in denen Olga vor Ort war, auch wenn das Hotel gestellt wurde. Daraus berechnet die App später die Verpflegungspauschale.</div>'}`;
 }
 
@@ -589,7 +591,7 @@ function vEinstellungen() {
     <button class="btn block" data-act="beispiele">Beispieldaten laden</button>
     <button class="btn danger block" data-act="wipe">Alle Daten löschen</button>
   </div>
-  <div class="muted small" style="text-align:center">Steuer-App · Stufe 1 · Testversion</div>`;
+  <div class="muted small" style="text-align:center">Steuer-App · Version ${APP_VERSION} · Testversion</div>`;
 }
 
 const VIEWS = {
@@ -898,6 +900,18 @@ app.addEventListener('change', async (ev) => {
 subscribe(() => render());
 render();
 
+// Updates: beim Start und beim Zurückkehren in die App nach einer neuen Version fragen.
+// Ist eine neue Version aktiv, lädt die App einmal neu.
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {});
 }
