@@ -8,7 +8,7 @@ import { streckeKm, googleMapsLink } from './route.js';
 import { esc, eur, money, parseNum, numInput, date, shortDate, period, today, uid, slug } from './format.js';
 import { saveFile, getFile, deleteFile } from './files.js';
 
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.3.1';
 const app = document.getElementById('app');
 const satzText = (n) => Number(n).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -138,7 +138,7 @@ function buchungZeile(b, { zeigeKontext = false } = {}) {
   const e = engagement(b.kontext);
   const sub = [shortDate(b.zahlungsdatum), b.verkehrsmittel ? VERKEHRSMITTEL[b.verkehrsmittel] : KAT[b.kategorie]?.name];
   if (zeigeKontext) sub.push(e ? e.titel : b.person);
-  if (b.kmFahrt) sub.push(kmText(b.kmFahrt));
+  if (b.kmFahrt) sub.push(`${b.kmFahrt.start} → ${b.kmFahrt.ziel}`, kmText(b.kmFahrt));
   if (b.waehrung && b.waehrung !== 'EUR') sub.push(money(b.betrag, b.waehrung));
   return `<button class="list-item" data-act="editBuchung" data-id="${b.id}">
     <div class="grow">

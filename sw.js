@@ -1,6 +1,6 @@
 // Service Worker: hält die App-Dateien vor, damit sie schnell und auch kurz offline startet.
 // Bei jeder neuen Version VERSION erhöhen, dann lädt das iPhone die neuen Dateien.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = 'steuer-app-' + VERSION;
 const FILES = [
   './',
