@@ -1,6 +1,25 @@
 // Feste Daten: Personen, Kategorien und die Regeln für den Steuer-Topf (siehe Konzept, Stufe 1).
 
 export const PERSONEN = ['Olga', 'Dominik', 'Gemeinsam'];
+
+export const UNTERKUNFT = {
+  hotel: 'Hotel mit Rechnung',
+  ferienwohnung: 'Ferienwohnung mit Rechnung',
+  gestellt: 'Vom Veranstalter gestellt',
+  privat: 'Privat (Freunde, Familie)',
+  keine: 'Keine Übernachtung'
+};
+
+// Tage eines Aufenthalts für die Verpflegungspauschale:
+// An- und Abreisetag = kleine Pauschale, Tage dazwischen = volle Pauschale.
+// Eintägig: kleine Pauschale nur bei mehr als 8 Stunden Abwesenheit.
+export function aufenthaltTage(a) {
+  if (!a.von || !a.bis) return null;
+  const d = Math.round((Date.parse(a.bis) - Date.parse(a.von)) / 864e5);
+  if (d < 0) return null;
+  if (d === 0) return { teil: a.ueber8h ? 1 : 0, voll: 0, naechte: 0, kalendertage: 1 };
+  return { teil: 2, voll: d - 1, naechte: d, kalendertage: d + 1 };
+}
 export const WAEHRUNGEN = ['EUR', 'CHF', 'USD', 'GBP'];
 
 // gruppe: einnahme | beruf | privat
@@ -100,5 +119,10 @@ export function beispielDaten() {
     b('b17', 'Dominik', 'allgemein', 'sonst_aus', '2026-03-03', 89, 'Arbeitstasche'),
     b('b18', 'Gemeinsam', 'allgemein', 'kapital', '2026-12-31', 620, 'Kapitalerträge laut Jahressteuerbescheinigung')
   ];
-  return { engagements: e, belege: [], buchungen };
+  const aufenthalte = [
+    { id: 'a1', engagementId: 'e-bern', von: '2026-03-12', bis: '2026-03-27', ort: 'Bern', land: 'Schweiz', unterkunft: 'hotel', fruehstueck: true, mittag: false, abend: false, ueber8h: false, notiz: 'Probenphase' },
+    { id: 'a2', engagementId: 'e-bern', von: '2026-04-09', bis: '2026-04-24', ort: 'Bern', land: 'Schweiz', unterkunft: 'gestellt', fruehstueck: false, mittag: false, abend: false, ueber8h: false, notiz: 'Vorstellungen, Wohnung vom Theater' },
+    { id: 'a3', engagementId: 'e-zuerich', von: '2026-06-05', bis: '2026-06-14', ort: 'Zürich', land: 'Schweiz', unterkunft: 'hotel', fruehstueck: true, mittag: false, abend: false, ueber8h: false, notiz: '' }
+  ];
+  return { engagements: e, aufenthalte, belege: [], buchungen };
 }

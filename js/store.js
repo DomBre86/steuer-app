@@ -6,7 +6,7 @@ import { beispielDaten } from './data.js';
 const KEY = 'steuerapp.v1';
 
 function leer() {
-  return { version: 1, engagements: [], belege: [], buchungen: [], gestartet: false };
+  return { version: 1, engagements: [], aufenthalte: [], belege: [], buchungen: [], gestartet: false };
 }
 
 let state = load();

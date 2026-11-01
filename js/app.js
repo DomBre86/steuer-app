@@ -3,7 +3,7 @@
 // Klicks und Eingaben werden zentral über data-Attribute verarbeitet.
 
 import { getState, subscribe, update, starteMitBeispielen, starteLeer, allesLoeschen, exportJson, importJson } from './store.js';
-import { PERSONEN, WAEHRUNGEN, KATEGORIEN, KAT, istEinnahme, steuerTopf, TOPF_STIL } from './data.js';
+import { PERSONEN, WAEHRUNGEN, KATEGORIEN, KAT, istEinnahme, steuerTopf, TOPF_STIL, UNTERKUNFT, aufenthaltTage } from './data.js';
 import { esc, eur, money, parseNum, numInput, date, shortDate, period, today, uid, slug } from './format.js';
 import { saveFile, getFile, deleteFile } from './files.js';
 
@@ -288,9 +288,77 @@ function vEngDetail() {
     ${e.gage && selb ? `<div class="muted small">Vereinbarte Gage: ${money(e.gage, e.waehrung || 'EUR')}</div>` : ''}
   </div>
   ${e.kontext ? `<div class="card stack" style="gap:6px"><div class="label">Kontext</div><div style="font-size:14px;line-height:1.45;white-space:pre-line">${esc(e.kontext)}</div></div>` : ''}
+  ${aufenthalteBlock(e)}
   <div class="between"><h2>Buchungen</h2><button class="link" data-act="go" data-v="buchung" data-kontext="${e.id}">+ ohne Beleg</button></div>
   ${liste.length ? `<div class="card flat">${liste.map((b) => buchungZeile(b)).join('')}</div>` : '<div class="empty">Noch keine Buchungen. Tippe unten auf „Beleg“.</div>'}
   <div class="card row small" style="font-size:13px">${icon('folder', 18, 'var(--accent)')}<span class="grow"><span class="muted">OneDrive-Ordner (ab Anbindung)</span><br><span class="num" style="font-weight:500;white-space:normal">${esc(ordnerPfad(e))}</span></span></div>`;
+}
+
+function tageText(t) {
+  if (!t) return 'Datum prüfen';
+  if (!t.naechte) return t.teil ? 'Tagesreise über 8 Std.' : 'Tagesreise unter 8 Std.';
+  return `${t.naechte} ${t.naechte === 1 ? 'Nacht' : 'Nächte'} · ${t.voll} volle ${t.voll === 1 ? 'Tag' : 'Tage'} + An-/Abreise`;
+}
+
+function mahlzeitenText(a) {
+  const m = [a.fruehstueck && 'Frühstück', a.mittag && 'Mittagessen', a.abend && 'Abendessen'].filter(Boolean);
+  return m.length ? `${m.join(', ')} gestellt` : '';
+}
+
+function aufenthalteBlock(e) {
+  const list = S().aufenthalte.filter((a) => a.engagementId === e.id).sort((a, b) => (a.von || '').localeCompare(b.von || ''));
+  const sum = list.reduce((acc, a) => {
+    const t = aufenthaltTage(a);
+    if (t) { acc.voll += t.voll; acc.teil += t.teil; acc.naechte += t.naechte; }
+    return acc;
+  }, { voll: 0, teil: 0, naechte: 0 });
+  return `<div class="between"><h2>Aufenthalte</h2><button class="link" data-act="go" data-v="aufenthalt" data-kontext="${e.id}">+ Aufenthalt</button></div>
+  ${list.length ? `<div class="card flat">${list.map((a) => `<button class="list-item" data-act="go" data-v="aufenthalt" data-id="${a.id}">
+      <div class="grow"><div class="t">${esc(period(a.von, a.bis) || 'ohne Datum')}${a.ort ? ' · ' + esc(a.ort) : ''}</div>
+      <div class="s"><span>${esc(tageText(aufenthaltTage(a)))}</span></div>
+      <div class="s"><span class="chip ${a.unterkunft === 'hotel' || a.unterkunft === 'ferienwohnung' ? 'blue' : 'gray'}">${esc(UNTERKUNFT[a.unterkunft] || '')}</span>${mahlzeitenText(a) ? `<span>${esc(mahlzeitenText(a))}</span>` : ''}</div></div>
+      ${icon('chev', 18, '#5B6168')}</button>`).join('')}
+    <div class="list-item" style="font-size:13px"><span class="grow muted">Für die Verpflegungspauschale</span><span class="num" style="font-weight:600">${sum.voll} volle · ${sum.teil} An-/Abreise</span></div></div>`
+    : '<div class="card dashed muted small" style="font-size:13px;line-height:1.45">Noch keine Aufenthalte. Trage die Zeiträume ein, in denen Olga vor Ort war, auch wenn das Hotel gestellt wurde. Daraus berechnet die App später die Verpflegungspauschale.</div>'}`;
+}
+
+function vAufenthalt() {
+  const id = ui.params.id;
+  if (!ui.draft) {
+    const a = id ? S().aufenthalte.find((x) => x.id === id) : null;
+    if (a) ui.draft = { ...a };
+    else {
+      const e = engagement(ui.params.kontext);
+      const vorhandene = S().aufenthalte.filter((x) => x.engagementId === e?.id && x.bis).sort((x, y) => x.bis.localeCompare(y.bis));
+      ui.draft = {
+        engagementId: e?.id, von: vorhandene.length ? '' : (e?.von || ''), bis: vorhandene.length ? '' : (e?.bis || ''),
+        ort: e?.ort || '', land: e?.land || 'Deutschland', unterkunft: 'hotel', fruehstueck: false, mittag: false, abend: false, ueber8h: false, notiz: ''
+      };
+    }
+  }
+  const d = ui.draft;
+  const e = engagement(d.engagementId);
+  const t = aufenthaltTage(d);
+  const cb = (k, label) => `<label class="row" style="min-height:40px;font-size:15px"><input type="checkbox" data-cb="${k}" ${d[k] ? 'checked' : ''} style="width:20px;height:20px">${label}</label>`;
+  return `${backBtn()}<h1 style="font-size:24px">${id ? 'Aufenthalt bearbeiten' : 'Neuer Aufenthalt'}</h1>
+  ${e ? `<div class="muted small">${esc(e.titel)}</div>` : ''}
+  <div class="grid2">
+    <label class="field">Anreise<input type="date" data-f="von" data-rr="1" value="${esc(d.von)}"></label>
+    <label class="field">Abreise<input type="date" data-f="bis" data-rr="1" value="${esc(d.bis)}"></label>
+  </div>
+  <div class="card info small" style="font-size:13px">${esc(tageText(t))}</div>
+  ${t && t.naechte === 0 ? cb('ueber8h', 'Mehr als 8 Stunden unterwegs') : ''}
+  <div class="grid2">
+    <label class="field">Ort<input data-f="ort" value="${esc(d.ort)}"></label>
+    <label class="field">Land<input data-f="land" value="${esc(d.land)}"><span class="hint">bestimmt die Pauschale im Ausland</span></label>
+  </div>
+  <label class="field">Unterkunft<select data-f="unterkunft">${Object.entries(UNTERKUNFT).map(([k, v]) => `<option value="${k}" ${d.unterkunft === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+    <span class="hint">Bei „gestellt“ oder „privat“ gibt es keine Übernachtungskosten, die Verpflegungspauschale aber trotzdem.</span></label>
+  <div class="field">Gestellte Mahlzeiten (kürzen die Pauschale)
+    ${cb('fruehstueck', 'Frühstück')}${cb('mittag', 'Mittagessen')}${cb('abend', 'Abendessen')}</div>
+  <label class="field">Notiz<input data-f="notiz" value="${esc(d.notiz)}" placeholder="z. B. Probenphase, Wohnung vom Theater"></label>
+  <button class="btn primary block" data-act="saveAuf">Speichern</button>
+  ${id ? '<button class="btn danger block" data-act="deleteAuf">Aufenthalt löschen</button>' : ''}`;
 }
 
 function vEngForm() {
@@ -526,12 +594,12 @@ function vEinstellungen() {
 
 const VIEWS = {
   start: vStart, offen: vOffen, engagements: vEngagements, engDetail: vEngDetail, engForm: vEngForm,
-  beleg: vBeleg, buchung: vBuchung, allgemein: vAllgemein, jahr: vJahr, einstellungen: vEinstellungen
+  beleg: vBeleg, buchung: vBuchung, allgemein: vAllgemein, jahr: vJahr, einstellungen: vEinstellungen, aufenthalt: vAufenthalt
 };
 
 function nav() {
   const active = {
-    start: ['start', 'offen'], engagements: ['engagements', 'engDetail', 'engForm'],
+    start: ['start', 'offen'], engagements: ['engagements', 'engDetail', 'engForm', 'aufenthalt'],
     allgemein: ['allgemein'], jahr: ['jahr'], einstellungen: ['einstellungen']
   };
   const b = (v, label, ic) => `<button class="${active[v].includes(ui.view) ? 'active' : ''}" data-act="tab" data-v="${v}">${icon(ic, 22)}<span>${label}</span></button>`;
@@ -557,7 +625,7 @@ function render() {
     app.innerHTML = `<main class="main">${vWelcome()}</main>`;
     return;
   }
-  const showFab = !['beleg', 'buchung', 'engForm', 'einstellungen'].includes(ui.view);
+  const showFab = !['beleg', 'buchung', 'engForm', 'einstellungen', 'aufenthalt'].includes(ui.view);
   const kontext = ui.view === 'engDetail' ? ui.params.id : '';
   app.innerHTML = nav() +
     `<main class="main">${(VIEWS[ui.view] || vStart)()}</main>` +
@@ -722,7 +790,11 @@ const ACTIONS = {
     const id = ui.params.id;
     const n = S().buchungen.filter((b) => b.kontext === id).length;
     if (!confirm(n ? `Engagement und ${n} zugehörige Buchungen löschen?` : 'Engagement löschen?')) return;
-    update((s) => { s.engagements = s.engagements.filter((e) => e.id !== id); s.buchungen = s.buchungen.filter((b) => b.kontext !== id); });
+    update((s) => {
+      s.engagements = s.engagements.filter((e) => e.id !== id);
+      s.buchungen = s.buchungen.filter((b) => b.kontext !== id);
+      s.aufenthalte = s.aufenthalte.filter((a) => a.engagementId !== id);
+    });
     ui.stack = []; tab('engagements'); toast('Engagement gelöscht.');
   },
   addPos: () => {
@@ -741,6 +813,26 @@ const ACTIONS = {
     const id = ui.params.id;
     update((s) => { s.buchungen = s.buchungen.filter((b) => b.id !== id); });
     back(); toast('Buchung gelöscht.');
+  },
+  saveAuf: () => {
+    const d = ui.draft;
+    const t = aufenthaltTage(d);
+    if (!d.von || !d.bis) return toast('Bitte Anreise und Abreise eingeben.');
+    if (!t) return toast('Die Abreise liegt vor der Anreise.');
+    const id = ui.params.id || uid();
+    update((s) => {
+      const rec = { ...d, id };
+      const i = s.aufenthalte.findIndex((a) => a.id === id);
+      if (i >= 0) s.aufenthalte[i] = rec; else s.aufenthalte.push(rec);
+    });
+    back();
+    toast('Aufenthalt gespeichert.');
+  },
+  deleteAuf: () => {
+    if (!confirm('Aufenthalt löschen?')) return;
+    const id = ui.params.id;
+    update((s) => { s.aufenthalte = s.aufenthalte.filter((a) => a.id !== id); });
+    back(); toast('Aufenthalt gelöscht.');
   },
   viewBeleg: (el) => zeigeBeleg(el.dataset.id),
   closeViewer: () => { URL.revokeObjectURL(ui.viewer.url); ui.viewer = null; render(); },
@@ -776,6 +868,11 @@ function onField(ev) {
 app.addEventListener('input', onField);
 app.addEventListener('change', async (ev) => {
   const el = ev.target;
+  if (el.dataset && el.dataset.cb && ui.draft) {
+    ui.draft[el.dataset.cb] = el.checked;
+    if (el.dataset.cb === 'ueber8h') render();
+    return;
+  }
   if (el.dataset && el.dataset.file) {
     const file = el.files && el.files[0];
     if (!file) return;
