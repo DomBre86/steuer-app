@@ -3,12 +3,14 @@
 // Klicks und Eingaben werden zentral über data-Attribute verarbeitet.
 
 import { getState, subscribe, update, starteMitBeispielen, starteLeer, allesLoeschen, exportJson, importJson } from './store.js';
-import { PERSONEN, WAEHRUNGEN, KATEGORIEN, KAT, istEinnahme, steuerTopf, TOPF_STIL, UNTERKUNFT, aufenthaltTage } from './data.js';
+import { PERSONEN, WAEHRUNGEN, KATEGORIEN, KAT, istEinnahme, steuerTopf, TOPF_STIL, UNTERKUNFT, aufenthaltTage, VERKEHRSMITTEL, kmSatz } from './data.js';
+import { streckeKm, googleMapsLink } from './route.js';
 import { esc, eur, money, parseNum, numInput, date, shortDate, period, today, uid, slug } from './format.js';
 import { saveFile, getFile, deleteFile } from './files.js';
 
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 const app = document.getElementById('app');
+const satzText = (n) => Number(n).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const ui = {
   view: 'start',
@@ -57,7 +59,7 @@ const vertragChip = (e) => (e.vertragsart === 'angestellt' ? 'purple' : 'blue');
 
 function offenePunkte() {
   const list = imJahr();
-  const ohneBeleg = list.filter((b) => !b.belegId);
+  const ohneBeleg = list.filter((b) => !b.belegId && !b.kmFahrt);
   const gemischt = list.filter((b) => topf(b) === 'Gemischt');
   return { ohneBeleg, gemischt, anzahl: ohneBeleg.length + gemischt.length };
 }
@@ -134,19 +136,30 @@ function buchungZeile(b, { zeigeKontext = false } = {}) {
   const t = topf(b);
   const ein = istEinnahme(b.kategorie);
   const e = engagement(b.kontext);
-  const sub = [shortDate(b.zahlungsdatum), KAT[b.kategorie]?.name];
+  const sub = [shortDate(b.zahlungsdatum), b.verkehrsmittel ? VERKEHRSMITTEL[b.verkehrsmittel] : KAT[b.kategorie]?.name];
   if (zeigeKontext) sub.push(e ? e.titel : b.person);
+  if (b.kmFahrt) sub.push(kmText(b.kmFahrt));
   if (b.waehrung && b.waehrung !== 'EUR') sub.push(money(b.betrag, b.waehrung));
   return `<button class="list-item" data-act="editBuchung" data-id="${b.id}">
     <div class="grow">
       <div class="t">${esc(b.beschreibung || KAT[b.kategorie]?.name)}</div>
       <div class="s"><span>${esc(sub.filter(Boolean).join(' · '))}</span>
-        ${!b.belegId ? '<span class="chip orange">Beleg fehlt</span>' : ''}
+        ${!b.belegId && !b.kmFahrt ? '<span class="chip orange">Beleg fehlt</span>' : ''}
         ${t === 'Gemischt' ? '<span class="chip orange">gemischt</span>' : ''}
       </div>
     </div>
     <span class="num ${ein ? 'pos' : ''}">${ein ? '+ ' : ''}${eur(b.eur)}</span>
   </button>`;
+}
+
+function kmText(k) {
+  const fmt = (n) => Number(n).toLocaleString('de-DE', { maximumFractionDigits: 1 });
+  if (k.art === 'arbeitsweg') return `${fmt(k.km)} km × ${k.tage} Tage × ${satzText(k.satz)} €`;
+  return `${k.hinRueck ? '2 × ' : ''}${fmt(k.km)} km × ${satzText(k.satz)} €`;
+}
+
+function vmOptionen(selected) {
+  return Object.entries(VERKEHRSMITTEL).map(([k, v]) => `<option value="${k}" ${k === selected ? 'selected' : ''}>${v}</option>`).join('');
 }
 
 function engagementKarte(e) {
@@ -290,7 +303,9 @@ function vEngDetail() {
   </div>
   ${e.kontext ? `<div class="card stack" style="gap:6px"><div class="label">Kontext</div><div style="font-size:14px;line-height:1.45;white-space:pre-line">${esc(e.kontext)}</div></div>` : ''}
   ${aufenthalteBlock(e)}
-  <div class="between"><h2>Buchungen</h2><button class="link" data-act="go" data-v="buchung" data-kontext="${e.id}">+ ohne Beleg</button></div>
+  <div class="between"><h2>Buchungen</h2>
+    <span class="row" style="gap:14px"><button class="link" data-act="go" data-v="fahrt" data-kontext="${e.id}">+ Autofahrt</button>
+    <button class="link" data-act="go" data-v="buchung" data-kontext="${e.id}">+ ohne Beleg</button></span></div>
   ${liste.length ? `<div class="card flat">${liste.map((b) => buchungZeile(b)).join('')}</div>` : '<div class="empty">Noch keine Buchungen. Tippe unten auf „Beleg“.</div>'}
   <div class="card row small" style="font-size:13px">${icon('folder', 18, 'var(--accent)')}<span class="grow"><span class="muted">OneDrive-Ordner (ab Anbindung)</span><br><span class="num" style="font-weight:500;white-space:normal">${esc(ordnerPfad(e))}</span></span></div>`;
 }
@@ -408,7 +423,7 @@ function vBeleg() {
     ui.draft = {
       file: null, fileName: '', preview: '', belegdatum: d0, aussteller: '', gesamt: '', waehrung: 'EUR', eurGesamt: '',
       kontext, kontextManuell: !!ui.params.kontext, person: engagement(kontext)?.person || 'Olga',
-      positionen: [], neu: { kategorie: kontext === 'allgemein' ? 'kommunikation' : 'uebernachtung', betrag: '', notiz: '' }
+      positionen: [], neu: { kategorie: kontext === 'allgemein' ? 'kommunikation' : 'uebernachtung', betrag: '', notiz: '', verkehrsmittel: 'bahn' }
     };
   }
   const d = ui.draft;
@@ -439,11 +454,13 @@ function vBeleg() {
   <div class="between" style="margin-top:4px"><h2 style="font-size:16px">Positionen</h2><span class="chip ${r.ok ? 'green' : 'orange'}" id="rest">${esc(r.text)}</span></div>
   <div class="card flat">
     ${d.positionen.map((p) => `<div class="list-item" style="padding:10px 8px 10px 14px">
-      <div class="grow"><div class="t">${esc(KAT[p.kategorie]?.name)}</div><div class="s">${esc(p.notiz || '–')}</div></div>
+      <div class="grow"><div class="t">${esc(KAT[p.kategorie]?.name)}${p.kategorie === 'fahrt' && p.verkehrsmittel ? ' · ' + esc(VERKEHRSMITTEL[p.verkehrsmittel]) : ''}</div><div class="s">${esc(p.notiz || '–')}</div></div>
       <span class="num">${money(p.betrag, d.waehrung)}</span>
       <button class="icon-btn" style="border:none;width:40px;height:40px" data-act="delPos" data-id="${p.id}" aria-label="Position entfernen">${icon('x', 16, '#5B6168')}</button></div>`).join('')}
     <div class="pos-add">
-      <label class="field">Kategorie<select data-f="neu.kategorie">${kategorieOptionen(d.neu.kategorie)}</select></label>
+      <label class="field">Kategorie<select data-f="neu.kategorie" data-rr="1">${kategorieOptionen(d.neu.kategorie)}</select></label>
+      ${d.neu.kategorie === 'fahrt' ? `<label class="field">Verkehrsmittel<select data-f="neu.verkehrsmittel" data-rr="1">${vmOptionen(d.neu.verkehrsmittel)}</select>
+        ${d.neu.verkehrsmittel === 'auto' ? '<span class="hint">Fürs eigene Auto besser „+ Autofahrt“ im Engagement nutzen: Mit der Kilometerpauschale sind Tankbelege bereits abgegolten. Parken und Maut gehören zu den Reisenebenkosten.</span>' : ''}</label>` : ''}
       <div class="grid2">
         <label class="field">Betrag<input class="mono" inputmode="decimal" data-f="neu.betrag" value="${esc(d.neu.betrag)}" placeholder="${d.positionen.length ? '0,00' : 'leer = Gesamtbetrag'}"></label>
         <label class="field">Notiz<input data-f="neu.notiz" value="${esc(d.neu.notiz)}" placeholder="z. B. Frühstück"></label>
@@ -483,6 +500,7 @@ function vBuchung() {
   return `${backBtn()}<h1 style="font-size:24px">${id ? 'Buchung bearbeiten' : 'Buchung ohne Beleg'}</h1>
   ${t ? `<div class="row small"><span class="muted">Steuer-Topf:</span><span class="chip ${TOPF_STIL[t] || 'green'}">${esc(t)}</span></div>` : ''}
   <label class="field">Kategorie<select data-f="kategorie" data-rr="1">${kategorieOptionen(d.kategorie)}</select></label>
+  ${d.kategorie === 'fahrt' ? `<label class="field">Verkehrsmittel<select data-f="verkehrsmittel">${vmOptionen(d.verkehrsmittel || 'bahn')}</select></label>` : ''}
   <label class="field">Beschreibung<input data-f="beschreibung" value="${esc(d.beschreibung)}" placeholder="was und warum beruflich"></label>
   <div class="grid2">
     <label class="field">Zahlungsdatum<input type="date" data-f="zahlungsdatum" value="${esc(d.zahlungsdatum)}"><span class="hint">bestimmt das Steuerjahr</span></label>
@@ -506,6 +524,66 @@ function vBuchung() {
   ${id ? '<button class="btn danger block" data-act="deleteBuchung">Buchung löschen</button>' : ''}`;
 }
 
+// Autofahrt mit dem eigenen Auto: Kilometerpauschale statt Beleg
+function fahrtWerte(d) {
+  const e = engagement(d.kontext);
+  const art = e && e.vertragsart === 'angestellt' ? 'arbeitsweg' : 'reise';
+  const s = kmSatz((d.datum || today()).slice(0, 4), art);
+  const km = parseNum(d.km);
+  const tage = Math.max(1, Math.round(parseNum(d.tage) || 1));
+  const kmGesamt = art === 'arbeitsweg' ? km * tage : km * (d.hinRueck ? 2 : 1);
+  return { e, art, satz: s.satz, satzJahr: s.jahr, geschaetzt: s.geschaetzt, km, tage, kmGesamt, betrag: Math.round(kmGesamt * s.satz * 100) / 100 };
+}
+
+function vFahrt() {
+  const id = ui.params.id;
+  if (!ui.draft) {
+    const b = id ? S().buchungen.find((x) => x.id === id) : null;
+    if (b && b.kmFahrt) {
+      ui.draft = { kontext: b.kontext, person: b.person, datum: b.zahlungsdatum, beschreibung: b.beschreibung,
+        start: b.kmFahrt.start, ziel: b.kmFahrt.ziel, km: numInput(b.kmFahrt.km), hinRueck: !!b.kmFahrt.hinRueck, tage: String(b.kmFahrt.tage || 1), routeInfo: '' };
+    } else {
+      const kontext = ui.params.kontext || 'allgemein';
+      const e = engagement(kontext);
+      ui.draft = { kontext, person: e?.person || 'Olga', datum: e?.von || today(), beschreibung: '',
+        start: S().einstellungen.heimat || '', ziel: e ? [e.haus, e.ort].filter(Boolean).join(', ') : '', km: '', hinRueck: true, tage: '1', routeInfo: '' };
+    }
+  }
+  const d = ui.draft;
+  const w = fahrtWerte(d);
+  const cb = `<label class="row" style="min-height:40px;font-size:15px"><input type="checkbox" data-cb="hinRueck" ${d.hinRueck ? 'checked' : ''} style="width:20px;height:20px">Hin- und Rückfahrt</label>`;
+  return `${backBtn()}<h1 style="font-size:24px">${id ? 'Autofahrt bearbeiten' : 'Autofahrt mit eigenem Auto'}</h1>
+  <label class="field">Engagement oder allgemein<select data-f="kontext" data-rr="1">${kontextOptionen(d.kontext)}</select></label>
+  ${!w.e ? `<label class="field">Person<select data-f="person">${personOptionen(d.person)}</select></label>` : ''}
+  <div class="card info small" style="font-size:13px;line-height:1.45">${w.art === 'arbeitsweg'
+    ? `Festvertrag: Weg zur festen Arbeitsstätte. Es zählt die <b>einfache Entfernung</b> pro Arbeitstag mit ${satzText(w.satz)} € je km.`
+    : `Reise zum Engagement: Es zählt <b>jeder gefahrene Kilometer</b> mit ${satzText(w.satz)} € je km.`}
+    ${w.geschaetzt ? `<br>Für ${esc((d.datum || '').slice(0, 4))} ist noch der Satz von ${w.satzJahr} hinterlegt.` : ''}</div>
+  <label class="field">Start<input data-f="start" value="${esc(d.start)}" placeholder="Adresse oder Ort"><span class="hint">${S().einstellungen.heimat ? 'Vorbelegt mit eurer Startadresse aus den Einstellungen' : 'Tipp: Startadresse in den Einstellungen hinterlegen'}</span></label>
+  <label class="field">Ziel<input data-f="ziel" value="${esc(d.ziel)}" placeholder="Adresse oder Ort"></label>
+  <div class="grid2">
+    <button class="btn small" data-act="calcRoute">Strecke berechnen</button>
+    <button class="btn small" data-act="openMaps">In Google Maps prüfen</button>
+  </div>
+  ${d.routeInfo ? `<div class="muted small">${esc(d.routeInfo)}</div>` : ''}
+  <div class="grid2">
+    <label class="field">${w.art === 'arbeitsweg' ? 'Einfache Entfernung (km)' : 'Strecke einfach (km)'}<input class="mono" inputmode="decimal" data-f="km" data-live="fahrt" value="${esc(d.km)}" placeholder="0"></label>
+    ${w.art === 'arbeitsweg'
+      ? `<label class="field">Arbeitstage<input class="mono" inputmode="numeric" data-f="tage" data-live="fahrt" value="${esc(d.tage)}"></label>`
+      : `<div class="field">&nbsp;${cb}</div>`}
+  </div>
+  <label class="field">Datum<input type="date" data-f="datum" data-rr="1" value="${esc(d.datum)}"><span class="hint">${w.art === 'arbeitsweg' ? 'bei mehreren Arbeitstagen: letzter Tag des Zeitraums' : 'Tag der Hinfahrt'}</span></label>
+  <label class="field">Beschreibung<input data-f="beschreibung" value="${esc(d.beschreibung)}" placeholder="${w.art === 'arbeitsweg' ? 'z. B. Arbeitsweg Oktober' : 'z. B. Anreise Proben'}"></label>
+  <div class="card between"><span class="muted" id="fahrt-rechnung" style="font-size:13px">${esc(fahrtRechnungText(w))}</span><span class="num" id="fahrt-betrag" style="font-size:17px">${eur(w.betrag)}</span></div>
+  <button class="btn primary block" data-act="saveFahrt">Speichern</button>
+  ${id ? '<button class="btn danger block" data-act="deleteBuchung">Fahrt löschen</button>' : ''}`;
+}
+
+function fahrtRechnungText(w) {
+  const f = (n) => Number(n).toLocaleString('de-DE', { maximumFractionDigits: 1 });
+  return `${f(w.kmGesamt)} km × ${satzText(w.satz)} €`;
+}
+
 function vAllgemein() {
   const list = imJahr().filter((b) => b.kontext === 'allgemein' || !engagement(b.kontext))
     .filter((b) => ui.filter === 'Alle' || b.person === ui.filter)
@@ -520,7 +598,10 @@ function vAllgemein() {
       <div class="s"><span>${esc(b.person)} · ${esc(KAT[b.kategorie]?.name)}</span><span class="chip ${TOPF_STIL[t] || 'green'}">${esc(t === 'Aufgeteilt' ? '50/50' : t)}</span>${!b.belegId ? '<span class="chip orange">Beleg fehlt</span>' : ''}</div></div>
       <span class="num ${ein ? 'pos' : ''}">${ein ? '+ ' : ''}${eur(b.eur)}</span></button>`;
   }).join('')}</div>` : '<div class="empty">Keine Einträge.</div>'}
-  <button class="btn block" data-act="go" data-v="buchung" data-kontext="allgemein">${icon('plus', 16)} Buchung ohne Beleg</button>`;
+  <div class="grid2">
+    <button class="btn" data-act="go" data-v="buchung" data-kontext="allgemein">${icon('plus', 16)} Ohne Beleg</button>
+    <button class="btn" data-act="go" data-v="fahrt" data-kontext="allgemein">${icon('plus', 16)} Autofahrt</button>
+  </div>`;
 }
 
 function jahresSummen() {
@@ -580,6 +661,14 @@ function vEinstellungen() {
     <div class="muted small">Bis dahin liegen alle Daten nur auf diesem Gerät. Mach ab und zu eine Datensicherung.</div>
   </div>
   <div class="card stack">
+    <div class="label">Autofahrten</div>
+    <label class="field">Startadresse (Zuhause)<input data-setting="heimat" value="${esc(s.einstellungen.heimat)}" placeholder="Straße, PLZ Ort" autocomplete="street-address">
+      <span class="hint">Wird bei neuen Autofahrten als Start vorgeschlagen.</span></label>
+    <label class="field">OpenRouteService-Schlüssel<input data-setting="orsKey" value="${esc(s.einstellungen.orsKey)}" placeholder="Schlüssel einfügen" autocomplete="off" spellcheck="false">
+      <span class="hint">Für die automatische Kilometerberechnung. Kostenlos erhältlich nach Registrierung bei <a href="https://openrouteservice.org/dev/#/signup" target="_blank" rel="noopener">openrouteservice.org</a>. Bleibt nur auf diesem Gerät.</span></label>
+    <div class="muted small">Kilometersätze 2026: Reisen 0,30 € je gefahrenem km, Arbeitsweg 0,38 € je km einfache Entfernung.</div>
+  </div>
+  <div class="card stack">
     <div class="label">Datensicherung</div>
     <div class="muted small">${s.buchungen.length} Buchungen, ${s.engagements.length} Engagements, ${s.belege.length} Belege. Belegdateien sind in der Sicherung nicht enthalten.</div>
     <button class="btn block" data-act="backup">${icon('down')} Sicherung speichern</button>
@@ -596,7 +685,8 @@ function vEinstellungen() {
 
 const VIEWS = {
   start: vStart, offen: vOffen, engagements: vEngagements, engDetail: vEngDetail, engForm: vEngForm,
-  beleg: vBeleg, buchung: vBuchung, allgemein: vAllgemein, jahr: vJahr, einstellungen: vEinstellungen, aufenthalt: vAufenthalt
+  beleg: vBeleg, buchung: vBuchung, allgemein: vAllgemein, jahr: vJahr, einstellungen: vEinstellungen, aufenthalt: vAufenthalt,
+  fahrt: vFahrt
 };
 
 function nav() {
@@ -627,7 +717,7 @@ function render() {
     app.innerHTML = `<main class="main">${vWelcome()}</main>`;
     return;
   }
-  const showFab = !['beleg', 'buchung', 'engForm', 'einstellungen', 'aufenthalt'].includes(ui.view);
+  const showFab = !['beleg', 'buchung', 'engForm', 'einstellungen', 'aufenthalt', 'fahrt'].includes(ui.view);
   const kontext = ui.view === 'engDetail' ? ui.params.id : '';
   app.innerHTML = nav() +
     `<main class="main">${(VIEWS[ui.view] || vStart)()}</main>` +
@@ -657,13 +747,15 @@ function csvExport() {
   const list = [...imJahr()].sort((a, b) => (a.zahlungsdatum || '').localeCompare(b.zahlungsdatum || ''));
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const n = (v) => (v === '' || v == null ? '' : String(Math.round(Number(v) * 100) / 100).replace('.', ','));
-  const head = ['Zahlungsdatum', 'Person', 'Engagement', 'Vertragsart', 'Kategorie', 'Einnahme/Ausgabe', 'Steuer-Topf', 'Beschreibung', 'Betrag', 'Währung', 'EUR', 'Quellensteuer', 'Beleg'];
+  const head = ['Zahlungsdatum', 'Person', 'Engagement', 'Vertragsart', 'Kategorie', 'Verkehrsmittel', 'Einnahme/Ausgabe', 'Steuer-Topf', 'Beschreibung', 'Betrag', 'Währung', 'EUR', 'Quellensteuer', 'Kilometer', 'Beleg'];
   const rows = list.map((b) => {
     const e = engagement(b.kontext);
     const beleg = S().belege.find((x) => x.id === b.belegId);
     return [date(b.zahlungsdatum), b.person, e ? e.titel : 'Allgemein', e ? vertragText(e) : '', KAT[b.kategorie]?.name,
+      b.verkehrsmittel ? VERKEHRSMITTEL[b.verkehrsmittel] : '',
       istEinnahme(b.kategorie) ? 'Einnahme' : 'Ausgabe', topf(b), b.beschreibung, n(b.betrag), b.waehrung, n(b.eur), n(b.quellensteuer),
-      beleg ? beleg.dateiname : (b.belegId ? 'Beispiel' : 'fehlt')].map(q).join(';');
+      b.kmFahrt ? `${b.kmFahrt.start} – ${b.kmFahrt.ziel}: ${kmText(b.kmFahrt)}` : '',
+      beleg ? beleg.dateiname : (b.kmFahrt ? 'Kilometerpauschale' : (b.belegId ? 'Beispiel' : 'fehlt'))].map(q).join(';');
   });
   download(`Jahresuebersicht_${ui.jahr}.csv`, '﻿' + [head.map(q).join(';'), ...rows].join('\r\n'), 'text/csv;charset=utf-8');
 }
@@ -674,7 +766,8 @@ async function saveBeleg() {
   if (!(gesamt > 0)) return toast('Bitte den Gesamtbetrag eingeben.');
   if (!d.belegdatum) return toast('Bitte das Belegdatum eingeben.');
   let pos = d.positionen;
-  if (!pos.length) pos = [{ id: uid(), kategorie: d.neu.kategorie, betrag: gesamt, notiz: d.neu.notiz }];
+  if (!pos.length) pos = [{ id: uid(), kategorie: d.neu.kategorie, betrag: gesamt, notiz: d.neu.notiz,
+    verkehrsmittel: d.neu.kategorie === 'fahrt' ? d.neu.verkehrsmittel : undefined }];
   const r = restInfo({ ...d, positionen: pos });
   if (!r.ok) return toast(`Die Positionen ergeben nicht den Gesamtbetrag (${r.text}).`);
   let faktor = 1;
@@ -695,7 +788,8 @@ async function saveBeleg() {
     pos.forEach((p) => {
       s.buchungen.push({ id: uid(), person: e ? e.person : d.person, kontext: d.kontext, kategorie: p.kategorie, zahlungsdatum: d.belegdatum,
         betrag: p.betrag, waehrung: d.waehrung, eur: Math.round(p.betrag * faktor * 100) / 100,
-        beschreibung: [p.notiz, d.aussteller].filter(Boolean).join(' – ') || KAT[p.kategorie]?.name, belegId });
+        beschreibung: [p.notiz, d.aussteller].filter(Boolean).join(' – ') || KAT[p.kategorie]?.name, belegId,
+        verkehrsmittel: p.verkehrsmittel });
     });
   });
   if (d.preview) URL.revokeObjectURL(d.preview);
@@ -714,7 +808,8 @@ function saveBuchung() {
   const rec = {
     person: e ? e.person : d.person, kontext: d.kontext, kategorie: d.kategorie, zahlungsdatum: d.zahlungsdatum,
     betrag, waehrung: d.waehrung, eur: eurBetrag, beschreibung: d.beschreibung, belegId: d.belegId || null,
-    quellensteuer: parseNum(d.quellensteuer) || ''
+    quellensteuer: parseNum(d.quellensteuer) || '',
+    verkehrsmittel: d.kategorie === 'fahrt' ? (d.verkehrsmittel || 'bahn') : undefined
   };
   const id = ui.params.id;
   update((s) => {
@@ -761,7 +856,50 @@ const ACTIONS = {
   tab: (el) => tab(el.dataset.v),
   go: (el) => go(el.dataset.v, { id: el.dataset.id, kontext: el.dataset.kontext || undefined }),
   openEng: (el) => go('engDetail', { id: el.dataset.id }),
-  editBuchung: (el) => go('buchung', { id: el.dataset.id }),
+  editBuchung: (el) => {
+    const b = S().buchungen.find((x) => x.id === el.dataset.id);
+    go(b && b.kmFahrt ? 'fahrt' : 'buchung', { id: el.dataset.id });
+  },
+  calcRoute: async () => {
+    const d = ui.draft;
+    if (!d.start.trim() || !d.ziel.trim()) return toast('Bitte Start und Ziel eingeben.');
+    d.routeInfo = 'Berechne Strecke …';
+    render();
+    try {
+      const r = await streckeKm(d.start, d.ziel, S().einstellungen.orsKey);
+      d.km = numInput(r.km);
+      d.routeInfo = `${r.von} → ${r.nach}: ${numInput(r.km)} km (einfach)`;
+    } catch (err) {
+      d.routeInfo = '';
+      toast(err.message || 'Die Strecke konnte nicht berechnet werden.');
+    }
+    render();
+  },
+  openMaps: () => {
+    const d = ui.draft;
+    if (!d.start.trim() || !d.ziel.trim()) return toast('Bitte Start und Ziel eingeben.');
+    window.open(googleMapsLink(d.start, d.ziel), '_blank');
+  },
+  saveFahrt: () => {
+    const d = ui.draft;
+    const w = fahrtWerte(d);
+    if (!(w.km > 0)) return toast('Bitte die Kilometer eingeben oder berechnen lassen.');
+    if (!d.datum) return toast('Bitte ein Datum eingeben.');
+    const id = ui.params.id || uid();
+    const rec = {
+      id, person: w.e ? w.e.person : d.person, kontext: d.kontext, kategorie: 'fahrt', zahlungsdatum: d.datum,
+      betrag: w.betrag, waehrung: 'EUR', eur: w.betrag, verkehrsmittel: 'auto', belegId: null,
+      beschreibung: d.beschreibung || `Autofahrt ${d.start} – ${d.ziel}`,
+      kmFahrt: { start: d.start, ziel: d.ziel, km: w.km, hinRueck: w.art === 'reise' ? !!d.hinRueck : false, tage: w.art === 'arbeitsweg' ? w.tage : 1, satz: w.satz, art: w.art }
+    };
+    update((s) => {
+      const i = s.buchungen.findIndex((b) => b.id === id);
+      if (i >= 0) s.buchungen[i] = { ...s.buchungen[i], ...rec }; else s.buchungen.push(rec);
+    });
+    ui.jahr = d.datum.slice(0, 4);
+    back();
+    toast(`Autofahrt gespeichert: ${eur(w.betrag)}.`);
+  },
   jahr: (el) => { ui.jahr = String(Number(ui.jahr) + Number(el.dataset.d)); render(); },
   filter: (el) => { ui.filter = el.dataset.v; render(); },
   beispiele: () => {
@@ -803,7 +941,8 @@ const ACTIONS = {
     const d = ui.draft;
     const betrag = parseNum(d.neu.betrag) || (d.positionen.length ? 0 : parseNum(d.gesamt));
     if (!(betrag > 0)) return toast('Bitte einen Betrag für die Position eingeben.');
-    d.positionen.push({ id: uid(), kategorie: d.neu.kategorie, betrag, notiz: d.neu.notiz });
+    d.positionen.push({ id: uid(), kategorie: d.neu.kategorie, betrag, notiz: d.neu.notiz,
+      verkehrsmittel: d.neu.kategorie === 'fahrt' ? d.neu.verkehrsmittel : undefined });
     d.neu = { ...d.neu, betrag: '', notiz: '' };
     render();
   },
@@ -861,7 +1000,13 @@ function onField(ev) {
     if (el.dataset.f === 'kontext') d.kontextManuell = true;
   }
   if (el.dataset.rr && ev.type === 'change') render();
-  if (el.dataset.live) {
+  if (el.dataset.live === 'fahrt') {
+    const w = fahrtWerte(d);
+    const b = document.getElementById('fahrt-betrag');
+    const t = document.getElementById('fahrt-rechnung');
+    if (b) b.textContent = eur(w.betrag);
+    if (t) t.textContent = fahrtRechnungText(w);
+  } else if (el.dataset.live) {
     const r = restInfo(d);
     const chip = document.getElementById('rest');
     if (chip) { chip.textContent = r.text; chip.className = 'chip ' + (r.ok ? 'green' : 'orange'); }
@@ -870,9 +1015,16 @@ function onField(ev) {
 app.addEventListener('input', onField);
 app.addEventListener('change', async (ev) => {
   const el = ev.target;
+  if (el.dataset && el.dataset.setting) {
+    const k = el.dataset.setting;
+    const v = el.value.trim();
+    update((s) => { s.einstellungen[k] = v; });
+    toast('Einstellung gespeichert.');
+    return;
+  }
   if (el.dataset && el.dataset.cb && ui.draft) {
     ui.draft[el.dataset.cb] = el.checked;
-    if (el.dataset.cb === 'ueber8h') render();
+    if (el.dataset.cb === 'ueber8h' || el.dataset.cb === 'hinRueck') render();
     return;
   }
   if (el.dataset && el.dataset.file) {

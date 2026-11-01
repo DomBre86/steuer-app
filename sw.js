@@ -1,6 +1,6 @@
 // Service Worker: hält die App-Dateien vor, damit sie schnell und auch kurz offline startet.
 // Bei jeder neuen Version VERSION erhöhen, dann lädt das iPhone die neuen Dateien.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'steuer-app-' + VERSION;
 const FILES = [
   './',
@@ -12,6 +12,7 @@ const FILES = [
   './js/store.js',
   './js/files.js',
   './js/format.js',
+  './js/route.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
@@ -32,6 +33,8 @@ self.addEventListener('activate', (event) => {
 // Erst das Netz fragen (immer die neueste Version), bei fehlender Verbindung den Zwischenspeicher nutzen.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  // Anfragen an andere Server (z. B. Routendienst) nicht anfassen
+  if (new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(
     // cache: 'no-cache' fragt immer beim Server nach, ob es eine neuere Datei gibt
     fetch(event.request, { cache: 'no-cache' })

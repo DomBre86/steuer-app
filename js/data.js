@@ -2,6 +2,29 @@
 
 export const PERSONEN = ['Olga', 'Dominik', 'Gemeinsam'];
 
+export const VERKEHRSMITTEL = {
+  bahn: 'Bahn',
+  flug: 'Flug',
+  taxi: 'Taxi',
+  fahrdienst: 'Uber / Fahrdienst',
+  oepnv: 'Bus, U-Bahn, Tram',
+  mietwagen: 'Mietwagen',
+  auto: 'Eigenes Auto'
+};
+
+// Kilometersätze je Steuerjahr. Neues Jahr: Zeile ergänzen, sobald die Werte feststehen.
+// reise: je gefahrenem km (Auswärtstätigkeit, z. B. Gastvertrag)
+// arbeitsweg: je km einfache Entfernung und Arbeitstag (feste Arbeitsstätte, Festvertrag)
+export const KM_SAETZE = {
+  2026: { reise: 0.30, arbeitsweg: 0.38 }
+};
+
+export function kmSatz(jahr, art) {
+  const jahre = Object.keys(KM_SAETZE).map(Number).sort((a, b) => a - b);
+  const j = jahre.filter((x) => x <= Number(jahr)).pop() ?? jahre[0];
+  return { satz: KM_SAETZE[j][art], jahr: j, geschaetzt: j !== Number(jahr) };
+}
+
 export const UNTERKUNFT = {
   hotel: 'Hotel mit Rechnung',
   ferienwohnung: 'Ferienwohnung mit Rechnung',
@@ -103,13 +126,15 @@ export function beispielDaten() {
     b('b1', 'Olga', 'e-bern', 'gage', '2026-04-30', 6000, 'Gage 1. Rate'),
     b('b2', 'Olga', 'e-bern', 'gage', '2026-05-31', 6000, 'Gage 2. Rate'),
     b('b3', 'Olga', 'e-bern', 'provision', '2026-05-05', 1200, 'Agenturprovision'),
-    b('b4', 'Olga', 'e-bern', 'fahrt', '2026-03-12', 480, 'Fahrt mit eigenem Pkw'),
-    b('b5', 'Olga', 'e-bern', 'fahrt', '2026-03-18', 74, 'Tankstelle Bern', false),
+    b('b4', 'Olga', 'e-bern', 'fahrt', '2026-03-12', 480, 'Autofahrt Zuhause – Bern', false,
+      { verkehrsmittel: 'auto', kmFahrt: { start: 'Zuhause', ziel: 'Bern', km: 800, hinRueck: true, tage: 1, satz: 0.30, art: 'reise' } }),
+    b('b5', 'Olga', 'e-bern', 'fahrt', '2026-03-18', 24, 'Taxi Bahnhof – Theater', false, { verkehrsmittel: 'taxi' }),
     b('b6', 'Olga', 'e-zuerich', 'gage', '2026-06-30', 7000, 'Gage'),
     b('b7', 'Olga', 'e-zuerich', 'uebernachtung', '2026-06-14', 1380, 'Hotel Zürich', false),
-    b('b8', 'Olga', 'e-zuerich', 'fahrt', '2026-06-05', 420, 'Flug nach Zürich', false),
+    b('b8', 'Olga', 'e-zuerich', 'fahrt', '2026-06-05', 420, 'Flug nach Zürich', false, { verkehrsmittel: 'flug' }),
     b('b9', 'Olga', 'e-augsburg', 'noten', '2026-08-20', 64, 'Klavierauszug La Bohème'),
-    b('b10', 'Olga', 'e-augsburg', 'fahrt', '2026-09-30', 312, 'Fahrten zu den Proben'),
+    b('b10', 'Olga', 'e-augsburg', 'fahrt', '2026-09-30', 319.2, 'Arbeitsweg September', false,
+      { verkehrsmittel: 'auto', kmFahrt: { start: 'Zuhause', ziel: 'Staatstheater Augsburg', km: 42, hinRueck: false, tage: 20, satz: 0.38, art: 'arbeitsweg' } }),
     b('b11', 'Olga', 'allgemein', 'kommunikation', '2026-12-31', 480, 'Internet (Jahr)'),
     b('b12', 'Olga', 'allgemein', 'unterricht', '2026-02-01', 1800, 'Gesangsunterricht Jahrespaket'),
     b('b13', 'Gemeinsam', 'allgemein', 'kinderbetreuung', '2026-12-31', 2160, 'Kita-Gebühren'),

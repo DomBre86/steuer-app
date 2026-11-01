@@ -6,7 +6,10 @@ import { beispielDaten } from './data.js';
 const KEY = 'steuerapp.v1';
 
 function leer() {
-  return { version: 1, engagements: [], aufenthalte: [], belege: [], buchungen: [], gestartet: false };
+  return {
+    version: 1, engagements: [], aufenthalte: [], belege: [], buchungen: [], gestartet: false,
+    einstellungen: { heimat: '', orsKey: '' }
+  };
 }
 
 let state = load();
@@ -16,7 +19,8 @@ function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return leer();
-    return Object.assign(leer(), JSON.parse(raw));
+    const data = JSON.parse(raw);
+    return Object.assign(leer(), data, { einstellungen: Object.assign(leer().einstellungen, data.einstellungen) });
   } catch (e) {
     console.error('Daten konnten nicht geladen werden', e);
     return leer();
@@ -46,29 +50,33 @@ export function update(mutator) {
   persist();
 }
 
+// Einstellungen (Startadresse, Schlüssel) bleiben beim Laden von Beispieldaten und beim Löschen erhalten.
 export function starteMitBeispielen() {
-  state = Object.assign(leer(), beispielDaten(), { gestartet: true });
+  state = Object.assign(leer(), beispielDaten(), { gestartet: true, einstellungen: state.einstellungen });
   persist();
 }
 
 export function starteLeer() {
-  state = Object.assign(leer(), { gestartet: true });
+  state = Object.assign(leer(), { gestartet: true, einstellungen: state.einstellungen });
   persist();
 }
 
 export function allesLoeschen() {
-  state = leer();
+  state = Object.assign(leer(), { einstellungen: state.einstellungen });
   persist();
 }
 
-// Datensicherung als Datei (bis OneDrive angebunden ist)
+// Datensicherung als Datei (bis OneDrive angebunden ist). Der Routenschlüssel bleibt draußen.
 export function exportJson() {
-  return JSON.stringify(state, null, 2);
+  const copy = JSON.parse(JSON.stringify(state));
+  if (copy.einstellungen) copy.einstellungen.orsKey = '';
+  return JSON.stringify(copy, null, 2);
 }
 
 export function importJson(text) {
   const data = JSON.parse(text);
   if (!Array.isArray(data.buchungen) || !Array.isArray(data.engagements)) throw new Error('Keine gültige Sicherung');
-  state = Object.assign(leer(), data, { gestartet: true });
+  const einstellungen = Object.assign({}, state.einstellungen, data.einstellungen, { orsKey: state.einstellungen.orsKey });
+  state = Object.assign(leer(), data, { gestartet: true, einstellungen });
   persist();
 }
